@@ -59,23 +59,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/v1/staff/**", "/api/staff/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/lost-found/items/**", "/api/lost-found/items/**", "/api/v1/lost-found/stats", "/api/lost-found/stats").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/notifications/**", "/api/notifications/**").permitAll()
-
-                // Student & Authenticated User Data Operations (POST & PATCH)
-                .requestMatchers(HttpMethod.POST, "/api/v1/complaints/**", "/api/complaints/**").hasAnyRole("STUDENT", "STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/lost-found/items/**", "/api/lost-found/items/**", "/api/v1/lost-found/report/**", "/api/lost-found/report/**", "/api/v1/lost-found/claims/**", "/api/lost-found/claims/**").hasAnyRole("STUDENT", "STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/ai/**", "/api/ai/**", "/api/v1/chat/**", "/api/chat/**").hasAnyRole("STUDENT", "STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.PATCH, "/api/v1/notifications/*/read", "/api/notifications/*/read", "/api/v1/notifications/mark_all_read", "/api/notifications/mark_all_read").hasAnyRole("STUDENT", "STAFF", "ADMIN")
-
-                // Staff & Admin Operations (PUT, PATCH & DELETE)
-                .requestMatchers(HttpMethod.PUT, "/api/v1/complaints/**", "/api/complaints/**").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.PATCH, "/api/v1/complaints/**", "/api/complaints/**").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/complaints/**", "/api/complaints/**").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/lost-found/items/**", "/api/lost-found/items/**").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.PATCH, "/api/v1/lost-found/items/**", "/api/lost-found/items/**", "/api/v1/lost-found/claims/*/status", "/api/lost-found/claims/*/status").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/lost-found/items/**", "/api/lost-found/items/**").hasAnyRole("STAFF", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/notifications/emails/send_test", "/api/notifications/emails/send_test").hasAnyRole("STAFF", "ADMIN")
-
-                // Admin Only Operations
+                .requestMatchers(HttpMethod.POST, "/api/v1/notifications/**", "/api/notifications/**").permitAll()
+                .requestMatchers(HttpMethod.PATCH, "/api/v1/notifications/**", "/api/notifications/**").permitAll()
+                // Permit public reporting for complaints and lost/found items
+                .requestMatchers(HttpMethod.POST, "/api/v1/complaints", "/api/complaints", "/api/v1/complaints/check-duplicate", "/api/v1/complaints/suggest-priority").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/lost-found/items", "/api/v1/lost-found/report", "/api/v1/lost-found/claims").permitAll()
+                // Role-restricted administrative & staff operations
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/complaints/**", "/api/complaints/**").hasAnyRole("ADMIN", "STAFF")
                 .requestMatchers(HttpMethod.PATCH, "/api/v1/complaints/*/assign", "/api/complaints/*/assign").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/v1/staff/**", "/api/staff/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/staff/**", "/api/staff/**").hasRole("ADMIN")

@@ -1,3 +1,4 @@
+
 package com.campusfix.backend.dto;
 
 import com.campusfix.backend.entity.User;
@@ -18,8 +19,11 @@ public class UserResponse {
     public UserResponse() {}
 
     public static UserResponse fromEntity(User user) {
+
         if (user == null) return null;
+
         UserResponse resp = new UserResponse();
+
         resp.setId(user.getId());
         resp.setFirebaseUid(user.getFirebaseUid());
         resp.setUsername(user.getUsername());
@@ -29,6 +33,7 @@ public class UserResponse {
         resp.setDepartment(user.getDepartment());
         resp.setPhone(user.getPhone());
         resp.setCreatedAt(user.getCreatedAt());
+
         return resp;
     }
 
@@ -41,7 +46,14 @@ public class UserResponse {
     }
 
     public String getUid() {
-        return firebaseUid != null ? firebaseUid : (id != null ? String.valueOf(id) : null);
+        return firebaseUid != null
+                ? firebaseUid
+                : (id != null ? String.valueOf(id) : null);
+    }
+
+    // Added setter to fix AuthController compilation error
+    public void setUid(String uid) {
+        this.firebaseUid = uid;
     }
 
     public String getFirebaseUid() {

@@ -1,7 +1,7 @@
 # CampusFix – Smart Campus Maintenance & Lost & Found Management System
 
 [![Java](https://img.shields.io/badge/Java-17%2B%20%2F%2021-orange.svg)](https://www.oracle.com/java/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0%2B-blue.svg)](https://www.mysql.com/)
 [![Flyway](https://img.shields.io/badge/Flyway-Database%20Migration-red.svg)](https://flywaydb.org/)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
@@ -35,7 +35,7 @@ Make sure the following software is installed on your development machine:
 
 | Component | Minimum Version | Verification Command |
 |---|---|---|
-| **JDK (Java Development Kit)** | Java 17 or Java 21 | `java -version` |
+| **JDK (Java Development Kit)** | Java 25 LTS | `java -version` |
 | **Apache Maven** | 3.8.0+ | `mvn -version` |
 | **MySQL Server** | 8.0+ | `mysql --version` |
 | **Node.js & npm** | Node 18+ & npm 9+ | `node -v && npm -v` |

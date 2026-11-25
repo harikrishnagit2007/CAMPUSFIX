@@ -5,8 +5,8 @@ This is the production-ready Java Spring Boot backend for the integrated **Campu
 ---
 
 ## 🛠️ Technology Stack
-- **Language**: Java 17+
-- **Framework**: Spring Boot 3.2.5
+- **Language**: Java 25 LTS
+- **Framework**: Spring Boot 3.5.16
 - **Persistence**: Spring Data JPA / Hibernate
 - **Database**: MySQL 8.0+
 - **Schema Migrations**: Flyway Database Migration
