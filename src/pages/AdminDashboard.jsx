@@ -735,6 +735,17 @@ export const AdminDashboard = ({ showToast }) => {
 
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'inline-flex', gap: '6px' }}>
+                            {c.status === 'Submitted' && (
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleUpdateStatus(c.id, 'Under Review')}
+                                title="Mark as Under Review"
+                                style={{ background: '#eff6ff', color: '#2563eb', borderColor: '#bfdbfe' }}
+                              >
+                                <Clock size={13} />
+                                <span>Review</span>
+                              </button>
+                            )}
                             {c.status !== 'In Progress' && c.status !== 'Resolved' && c.status !== 'Rejected' && (
                               <button
                                 className="btn btn-secondary btn-sm"

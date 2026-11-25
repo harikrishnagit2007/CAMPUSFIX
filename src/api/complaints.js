@@ -119,7 +119,8 @@ const filterForRoleAndEmail = (list, userId, userRole, userEmail) => {
   }
 
   const stored = getStoredUser();
-  const cleanEmail = (userEmail || stored?.email || '').trim().toLowerCase();
+  const rawEmail = typeof userEmail === 'string' && userEmail.trim() ? userEmail : typeof stored?.email === 'string' ? stored.email : '';
+  const cleanEmail = rawEmail.trim().toLowerCase();
   const cleanId = userId ? String(userId) : stored?.uid || stored?.id ? String(stored.uid || stored.id) : '';
 
   if (!cleanEmail && !cleanId) return [];

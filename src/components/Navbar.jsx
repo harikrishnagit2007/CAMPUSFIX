@@ -114,7 +114,7 @@ export const Navbar = ({
           )}
 
           {/* Notification Dropdown */}
-          <NotificationDropdown showToast={showToast} />
+          <NotificationDropdown showToast={showToast} onChangeModule={onChangeModule} />
 
           {/* User Profile Badge */}
           <div className="user-badge">

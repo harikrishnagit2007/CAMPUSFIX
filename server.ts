@@ -347,6 +347,46 @@ async function startServer() {
         c.complaintId === String(idParam)
     );
 
+  const addEmailLog = ({
+    complaint_id = '',
+    item_id = '',
+    category_type = 'COMPLAINT',
+    status_stage = 'Updated',
+    recipient_email = '',
+    recipient_name = 'Campus Member',
+    subject = '',
+    message = '',
+  }: {
+    complaint_id?: string;
+    item_id?: string;
+    category_type?: 'COMPLAINT' | 'LOST_FOUND';
+    status_stage?: string;
+    recipient_email?: string;
+    recipient_name?: string;
+    subject?: string;
+    message?: string;
+  }) => {
+    const cleanEmail = (recipient_email || '').trim().toLowerCase();
+    if (!cleanEmail) return;
+    const entry = {
+      id: `EML-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      complaint_id,
+      item_id,
+      category_type,
+      status_stage,
+      recipient_name: recipient_name || cleanEmail.split('@')[0] || 'Campus Member',
+      recipient_email: cleanEmail,
+      subject,
+      message,
+      status: 'SENT',
+      sent_at: new Date().toISOString(),
+    };
+    store.emailLogs.unshift(entry);
+    if (store.emailLogs.length > 200) {
+      store.emailLogs = store.emailLogs.slice(0, 200);
+    }
+  };
+
   // Express API Router
   const apiRouter = express.Router();
 
@@ -579,6 +619,20 @@ async function startServer() {
       const st = store.staff.find((s) => String(s.id) === String(staffId));
       found.assigned_staff_details = st ? { name: st.name, specialization: st.specialization } : null;
       found.updated_at = new Date().toISOString();
+      const targetEmail = (found.student_email || found.studentEmail || found.student_details?.email || '').trim().toLowerCase();
+      addEmailLog({
+        complaint_id: found.formatted_id || String(found.id),
+        category_type: 'COMPLAINT',
+        status_stage: found.status,
+        recipient_email: targetEmail,
+        recipient_name: found.student_name || found.studentName || 'Student',
+        subject: staffId
+          ? `Technician Assigned (${st?.name || 'Staff'}) - ${found.complaint_title || 'Issue'}`
+          : `Complaint Under Review - ${found.complaint_title || 'Issue'}`,
+        message: staffId
+          ? `Your complaint #${found.formatted_id || found.id} has been assigned to ${st?.name || 'maintenance staff'}.`
+          : `Admin moved your complaint #${found.formatted_id || found.id} to Under Review.`,
+      });
       saveStore();
       return res.json(found);
     }
@@ -660,6 +714,15 @@ async function startServer() {
       store.complaints[existingIdx] = { ...store.complaints[existingIdx], ...complaint };
     } else {
       store.complaints.unshift(complaint);
+      addEmailLog({
+        complaint_id: formatted_id,
+        category_type: 'COMPLAINT',
+        status_stage: complaint.status || 'Submitted',
+        recipient_email: studentEmail,
+        recipient_name: studentName,
+        subject: `Complaint Registered: ${complaint.complaint_title}`,
+        message: `Your issue #${formatted_id} (${complaint.category}) has been submitted and is awaiting review.`,
+      });
     }
     saveStore();
     return res.status(201).json(complaint);
@@ -684,6 +747,7 @@ async function startServer() {
     const foundIndex = findComplaintIndex(req.params.id);
     if (foundIndex !== -1) {
       const target: any = store.complaints[foundIndex];
+      const prevStatus = target.status;
       if (req.body.status) {
         target.status = req.body.status;
         if (req.body.status === 'Resolved') {
@@ -700,6 +764,18 @@ async function startServer() {
         target.priority = req.body.priority;
       }
       target.updated_at = new Date().toISOString();
+      if (req.body.status && req.body.status !== prevStatus) {
+        const targetEmail = (target.student_email || target.studentEmail || target.student_details?.email || '').trim().toLowerCase();
+        addEmailLog({
+          complaint_id: target.formatted_id || String(target.id),
+          category_type: 'COMPLAINT',
+          status_stage: target.status,
+          recipient_email: targetEmail,
+          recipient_name: target.student_name || target.studentName || 'Student',
+          subject: `Issue Status Update (${target.status}): ${target.complaint_title || 'Complaint'}`,
+          message: `Your complaint #${target.formatted_id || target.id} is now ${target.status}.`,
+        });
+      }
       saveStore();
       return res.json(target);
     }
@@ -709,9 +785,23 @@ async function startServer() {
   apiRouter.put('/complaints/:id', (req, res) => {
     const foundIndex = findComplaintIndex(req.params.id);
     if (foundIndex !== -1) {
+      const prevStatus = store.complaints[foundIndex].status;
       store.complaints[foundIndex] = { ...store.complaints[foundIndex], ...req.body, updated_at: new Date().toISOString() };
+      const updated: any = store.complaints[foundIndex];
+      if (req.body.status && req.body.status !== prevStatus) {
+        const targetEmail = (updated.student_email || updated.studentEmail || updated.student_details?.email || '').trim().toLowerCase();
+        addEmailLog({
+          complaint_id: updated.formatted_id || String(updated.id),
+          category_type: 'COMPLAINT',
+          status_stage: updated.status,
+          recipient_email: targetEmail,
+          recipient_name: updated.student_name || updated.studentName || 'Student',
+          subject: `Issue Status Update (${updated.status}): ${updated.complaint_title || 'Complaint'}`,
+          message: `Your complaint #${updated.formatted_id || updated.id} is now ${updated.status}.`,
+        });
+      }
       saveStore();
-      return res.json(store.complaints[foundIndex]);
+      return res.json(updated);
     }
     return res.status(404).json({ error: 'Not found' });
   });
@@ -878,6 +968,15 @@ async function startServer() {
       store.lostFound[existingIdx] = { ...store.lostFound[existingIdx], ...newItem };
     } else {
       store.lostFound.unshift(newItem);
+      addEmailLog({
+        item_id: itemCode,
+        category_type: 'LOST_FOUND',
+        status_stage: newItem.type === 'FOUND' ? 'Found Reported' : 'Lost Reported',
+        recipient_email: newItem.reporterEmail || contactEmail,
+        recipient_name: newItem.reporterName || 'Campus Member',
+        subject: `${newItem.type === 'FOUND' ? 'Found' : 'Lost'} Item Registered: ${newItem.itemName || newItem.title || 'Item'}`,
+        message: `Your ${newItem.type === 'FOUND' ? 'Found' : 'Lost'} report (#${itemCode}) at ${newItem.location || 'Campus'} is now live.`,
+      });
     }
     saveStore();
     return res.status(201).json(newItem);
@@ -891,9 +990,22 @@ async function startServer() {
   apiRouter.put('/lost-found/items/:id', (req, res) => {
     const idx = store.lostFound.findIndex(i => String(i.id) === req.params.id || i.itemCode === req.params.id);
     if (idx !== -1) {
+      const prevStatus = store.lostFound[idx].status;
       store.lostFound[idx] = { ...store.lostFound[idx], ...req.body, updatedAt: new Date().toISOString() };
+      const updated = store.lostFound[idx];
+      if (req.body.status === 'RETURNED' && prevStatus !== 'RETURNED') {
+        addEmailLog({
+          item_id: updated.itemCode || String(updated.id),
+          category_type: 'LOST_FOUND',
+          status_stage: 'Returned',
+          recipient_email: updated.reporterEmail || updated.contactEmail || '',
+          recipient_name: updated.reporterName || 'Campus Member',
+          subject: `Item Returned & Reunited: ${updated.itemName || updated.title || 'Item'}`,
+          message: `Lost & Found report #${updated.itemCode || updated.id} has been marked as Returned.`,
+        });
+      }
       saveStore();
-      return res.json(store.lostFound[idx]);
+      return res.json(updated);
     }
     return res.status(404).json({ error: 'Item not found' });
   });
@@ -927,6 +1039,32 @@ async function startServer() {
       store.claims[existingIdx] = { ...store.claims[existingIdx], ...newClaim };
     } else {
       store.claims.unshift(newClaim);
+      addEmailLog({
+        item_id: String(newClaim.itemId || claimCode),
+        category_type: 'LOST_FOUND',
+        status_stage: 'Claim Submitted',
+        recipient_email: claimantEmail,
+        recipient_name: newClaim.claimantName || 'Claimant',
+        subject: `Claim Request Submitted: ${newClaim.itemTitle || 'Campus Item'}`,
+        message: `Your ownership claim #${claimCode} is pending verification.`,
+      });
+      const relatedItem: any = store.lostFound.find(
+        (i) => String(i.id) === String(newClaim.itemId) || i.itemCode === String(newClaim.itemId)
+      );
+      if (relatedItem) {
+        const ownerEmail = (relatedItem.reporterEmail || relatedItem.contactEmail || '').trim().toLowerCase();
+        if (ownerEmail && ownerEmail !== claimantEmail) {
+          addEmailLog({
+            item_id: relatedItem.itemCode || String(relatedItem.id),
+            category_type: 'LOST_FOUND',
+            status_stage: 'Claim Received',
+            recipient_email: ownerEmail,
+            recipient_name: relatedItem.reporterName || 'Reporter',
+            subject: `New Claim Received for ${newClaim.itemTitle || relatedItem.itemName}`,
+            message: `${newClaim.claimantName || 'A campus user'} submitted ownership claim #${claimCode}.`,
+          });
+        }
+      }
     }
     saveStore();
     return res.status(201).json(newClaim);
@@ -947,6 +1085,17 @@ async function startServer() {
           else if (req.body.status === 'REJECTED') targetItem.status = 'OPEN';
         }
       }
+      if (req.body.status) {
+        addEmailLog({
+          item_id: String(found.itemId || found.claimCode || found.id),
+          category_type: 'LOST_FOUND',
+          status_stage: `Claim ${req.body.status}`,
+          recipient_email: found.claimantEmail || '',
+          recipient_name: found.claimantName || 'Claimant',
+          subject: `Claim ${req.body.status}: ${found.itemTitle || 'Campus Item'}`,
+          message: `Your claim #${found.claimCode || found.id} status has been updated to ${req.body.status}.`,
+        });
+      }
       saveStore();
       return res.json(found);
     }
@@ -965,18 +1114,34 @@ async function startServer() {
     if (target) target.read = true;
     return res.json({ success: true, notification: target });
   });
-  apiRouter.get('/notifications/emails', (_req, res) => res.json(store.emailLogs));
-  apiRouter.post('/notifications/emails/send_test', (_req, res) => {
+  apiRouter.get('/notifications/emails', (req, res) => {
+    const userEmail = ((req.query.email as string) || (req.headers['x-user-email'] as string) || '').trim().toLowerCase();
+    const userRole = ((req.query.role as string) || (req.headers['x-user-role'] as string) || 'STUDENT').toUpperCase();
+    if (userRole === 'ADMIN' || userRole === 'STAFF' || !userEmail) {
+      return res.json(store.emailLogs);
+    }
+    const filtered = store.emailLogs.filter(
+      (e: any) => (e.recipient_email || '').trim().toLowerCase() === userEmail
+    );
+    return res.json(filtered);
+  });
+  apiRouter.post('/notifications/emails/send_test', (req, res) => {
+    const userEmail = ((req.body?.email as string) || (req.headers['x-user-email'] as string) || 'student@campusfix.edu').trim().toLowerCase();
+    const userName = (req.headers['x-user-name'] as string) || 'Student Member';
     const newEmail = {
-      id: store.emailLogs.length + 1,
+      id: `EML-${Date.now()}`,
       complaint_id: `CMP-${Date.now().toString().slice(-4)}`,
-      recipient_name: 'Student Member',
-      recipient_email: 'student@campusfix.edu',
+      category_type: 'COMPLAINT',
+      status_stage: 'Resolved',
+      recipient_name: userName,
+      recipient_email: userEmail,
       subject: 'CampusFix: Issue Ticket Resolution Verified',
+      message: 'Your campus maintenance request update was dispatched.',
       status: 'SENT',
       sent_at: new Date().toISOString(),
     };
     store.emailLogs.unshift(newEmail);
+    saveStore();
     return res.json({ success: true, email: newEmail });
   });
 

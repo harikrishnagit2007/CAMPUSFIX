@@ -13,6 +13,7 @@ import {
   QrCode,
   X,
   RotateCcw,
+  Plus,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { complaintsApi } from '../api/complaints';
@@ -130,7 +131,7 @@ export const StudentDashboard = ({
         .getLocation(locId)
         .then((loc) => {
           setQrPrefilledLocation(loc);
-          if (onOpenReportModal) onOpenReportModal();
+          window.dispatchEvent(new CustomEvent('campusfix-open-report', { detail: { location: loc } }));
           showToast(`QR Code decoded: ${loc.building} - ${loc.room}`, 'info');
         })
         .catch(() => {});
@@ -185,7 +186,7 @@ export const StudentDashboard = ({
 
   const handleSelectQrLocation = (loc) => {
     setQrPrefilledLocation(loc);
-    if (onOpenReportModal) onOpenReportModal();
+    window.dispatchEvent(new CustomEvent('campusfix-open-report', { detail: { location: loc } }));
   };
 
   const handleDeleteConfirm = async () => {
@@ -254,14 +255,24 @@ export const StudentDashboard = ({
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
+            type="button"
             className="btn btn-secondary btn-sm"
             onClick={() => setIsQrScannerOpen(true)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
           >
             <QrCode size={16} />
             <span>Scan Location QR</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={onOpenReportModal}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Plus size={16} />
+            <span>Report Issue</span>
           </button>
         </div>
       </div>
@@ -476,10 +487,6 @@ export const StudentDashboard = ({
           <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>
             My Reported Issues ({filteredComplaints.length})
           </h2>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            {user?.email ? `${user.email} • ` : ''}
-            {stats.submitted} Under Review • {stats.in_progress} Processing • {stats.total - stats.resolved} Unsolved • {stats.resolved} Resolved
-          </span>
         </div>
 
         {loading ? (
