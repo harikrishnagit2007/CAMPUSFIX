@@ -34,6 +34,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { lostFoundService } from '../services/api';
+import { lostAndFoundApi } from '../api/lostAndFound';
+import { compressImageForStorage } from '../firebase';
 
 const CATEGORIES = [
   'All Categories',
@@ -79,6 +81,7 @@ export const LostFoundModule = ({ showToast }) => {
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [selectedBuilding, setSelectedBuilding] = useState('All Locations');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
+  const [onlyMyReports, setOnlyMyReports] = useState(false);
 
   // Modals & Sub-views
   const [viewingItem, setViewingItem] = useState(null);
@@ -130,8 +133,9 @@ export const LostFoundModule = ({ showToast }) => {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setLostForm((prev) => ({ ...prev, image: event.target?.result }));
+    reader.onload = async (event) => {
+      const compressed = await compressImageForStorage(event.target?.result);
+      setLostForm((prev) => ({ ...prev, image: compressed }));
       if (showToast) showToast('Photo attached to Lost Report!', 'success');
     };
     reader.readAsDataURL(file);
@@ -145,8 +149,9 @@ export const LostFoundModule = ({ showToast }) => {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setFoundForm((prev) => ({ ...prev, image: event.target?.result }));
+    reader.onload = async (event) => {
+      const compressed = await compressImageForStorage(event.target?.result);
+      setFoundForm((prev) => ({ ...prev, image: compressed }));
       if (showToast) showToast('Photo attached to Found Item Report!', 'success');
     };
     reader.readAsDataURL(file);
@@ -158,25 +163,60 @@ export const LostFoundModule = ({ showToast }) => {
     lostWhat: '',
     lostCategory: 'Electronics',
     lostWhere: 'Central Library',
+    lostArea: '',
     lostWhen: new Date().toISOString().split('T')[0],
     lostMarks: '',
   });
   const [assistantMatches, setAssistantMatches] = useState([]);
+  const [liveDbMatches, setLiveDbMatches] = useState([]);
+  const [dbScannedCount, setDbScannedCount] = useState(0);
   const [assistantAnalyzing, setAssistantAnalyzing] = useState(false);
+
+  const currentUserEmail = (user?.email || '').trim().toLowerCase();
+
+  // Keep form contact fields synchronized with the signed-in user's email/phone
+  useEffect(() => {
+    if (!user) return;
+    const normalizedEmail = (user.email || '').trim().toLowerCase();
+    const userPhone = user.phone || '';
+    setLostForm((prev) => ({
+      ...prev,
+      contactEmail: normalizedEmail || prev.contactEmail,
+      contactPhone: prev.contactPhone || userPhone,
+    }));
+    setFoundForm((prev) => ({
+      ...prev,
+      contactEmail: normalizedEmail || prev.contactEmail,
+      contactPhone: prev.contactPhone || userPhone,
+    }));
+    setClaimPhone((prev) => prev || userPhone);
+  }, [user?.email, user?.phone]);
+
+  // Recompute Lost & Found stats live whenever items or claims change
+  useEffect(() => {
+    const totalLost = items.filter((i) => i.type === 'LOST').length;
+    const totalFound = items.filter((i) => i.type === 'FOUND').length;
+    const pendingClaims = claims.filter((c) => c.status === 'PENDING').length;
+    const returnedFromItems = items.filter((i) => i.status === 'RETURNED').length;
+    const returnedFromClaims = claims.filter((c) => c.status === 'APPROVED' || c.status === 'HANDED_OVER').length;
+    setStats({
+      totalLost,
+      totalFound,
+      pendingClaims,
+      returnedCount: Math.max(returnedFromItems, returnedFromClaims),
+    });
+  }, [items, claims]);
 
   // Fetch all data from centralized api service
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [itemsData, claimsData, statsData] = await Promise.all([
+      const [itemsData, claimsData] = await Promise.all([
         lostFoundService.fetchLostFoundItems(),
         lostFoundService.fetchItemClaims(),
-        lostFoundService.fetchLostFoundStats(),
       ]);
-      
       setItems(itemsData || []);
       setClaims(claimsData || []);
-      setStats(statsData || { totalLost: 0, totalFound: 0, pendingClaims: 0, returnedCount: 0 });
     } catch (err) {
       console.warn('[LostFound] Notice loading data:', err);
     } finally {
@@ -185,7 +225,7 @@ export const LostFoundModule = ({ showToast }) => {
   };
 
   useEffect(() => {
-    // Purge any legacy mock seed items from client storage so only user-reported items show
+    // Purge any legacy mock seed items from client storage so only real reported items show
     try {
       const legacyMockCodes = [
         'LF-2026-001', 'LF-2026-002', 'LF-2026-003', 'LF-2026-004',
@@ -210,8 +250,22 @@ export const LostFoundModule = ({ showToast }) => {
     } catch (e) {
       console.warn('Storage cleanup notice:', e);
     }
+
     fetchData();
-  }, []);
+
+    const unsubItems = lostAndFoundApi.subscribeItems((liveItems) => {
+      setItems(liveItems || []);
+      setLoading(false);
+    });
+    const unsubClaims = lostAndFoundApi.subscribeClaims((liveClaims) => {
+      setClaims(liveClaims || []);
+    });
+
+    return () => {
+      if (typeof unsubItems === 'function') unsubItems();
+      if (typeof unsubClaims === 'function') unsubClaims();
+    };
+  }, [currentUserEmail]);
 
   // Submit Lost Item Report
   const handleLostSubmit = async (e) => {
@@ -238,7 +292,8 @@ export const LostFoundModule = ({ showToast }) => {
         reporterId: user ? String(user.id || user.uid) : 'anonymous',
         reporterName: user?.name || user?.username || 'Student User',
         reporterRole: user?.role || 'STUDENT',
-        contactEmail: lostForm.contactEmail || user?.email || '',
+        reporterEmail: currentUserEmail || (lostForm.contactEmail || '').trim().toLowerCase(),
+        contactEmail: (lostForm.contactEmail || user?.email || '').trim().toLowerCase(),
         contactPhone: lostForm.contactPhone || user?.phone || '',
       };
 
@@ -298,7 +353,8 @@ export const LostFoundModule = ({ showToast }) => {
         reporterId: user ? String(user.id || user.uid) : 'anonymous',
         reporterName: user?.name || user?.username || 'Campus Finder',
         reporterRole: user?.role || 'STUDENT',
-        contactEmail: foundForm.contactEmail || user?.email || '',
+        reporterEmail: currentUserEmail || (foundForm.contactEmail || '').trim().toLowerCase(),
+        contactEmail: (foundForm.contactEmail || user?.email || '').trim().toLowerCase(),
         contactPhone: foundForm.contactPhone || user?.phone || '',
       };
 
@@ -379,46 +435,106 @@ export const LostFoundModule = ({ showToast }) => {
     }
   };
 
-  // Run AI Recovery Assistant Query
-  const handleRunAssistant = () => {
-    setAssistantAnalyzing(true);
-    setTimeout(() => {
-      // Find candidate found items matching category, building, or keywords
-      const foundItems = items.filter((i) => i.type === 'FOUND' && i.status !== 'CLOSED');
-      const qWords = `${assistantInput.lostWhat} ${assistantInput.lostMarks}`.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
-
-      const scored = foundItems.map((candidate) => {
-        let score = 0;
-        const reasons = [];
-
-        if (candidate.category && candidate.category.toLowerCase() === assistantInput.lostCategory.toLowerCase()) {
-          score += 40;
-          reasons.push(`Matching Category: ${candidate.category}`);
-        }
-        if (candidate.location && candidate.location.toLowerCase().includes(assistantInput.lostWhere.toLowerCase())) {
-          score += 30;
-          reasons.push(`Located in/near ${assistantInput.lostWhere}`);
-        }
-        const cWords = `${candidate.title} ${candidate.itemName} ${candidate.description}`.toLowerCase();
-        const matchedKeywords = qWords.filter((w) => cWords.includes(w));
-        if (matchedKeywords.length > 0) {
-          score += Math.min(30, matchedKeywords.length * 10);
-          reasons.push(`Keywords matched: ${matchedKeywords.join(', ')}`);
-        }
-
-        return {
-          candidate,
-          confidence: Math.min(score, 98),
-          reasons,
-        };
-      });
-
-      const best = scored.filter((s) => s.confidence >= 30).sort((a, b) => b.confidence - a.confidence);
-      setAssistantMatches(best);
-      setAssistantAnalyzing(false);
-      setAssistantStep(3);
-    }, 600);
+  // Owner actions on Lost/Found items
+  const handleMarkItemReturned = async (item) => {
+    try {
+      await lostFoundService.updateLostFoundItem(item.id, { status: 'RETURNED' });
+      if (showToast) showToast(`Item #${item.itemCode || item.id} marked as Returned!`, 'success');
+      if (viewingItem && viewingItem.id === item.id) {
+        setViewingItem({ ...viewingItem, status: 'RETURNED' });
+      }
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      if (showToast) showToast('Could not update item status.', 'error');
+    }
   };
+
+  const handleDeleteItem = async (item) => {
+    try {
+      await lostFoundService.deleteLostFoundItem(item.id);
+      if (showToast) showToast(`Report #${item.itemCode || item.id} removed.`, 'success');
+      if (viewingItem && viewingItem.id === item.id) {
+        setViewingItem(null);
+      }
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      if (showToast) showToast('Could not delete item report.', 'error');
+    }
+  };
+
+  // Live Firestore database check as user answers AI Recovery Assistant questions
+  useEffect(() => {
+    if (activeTab !== 'ai-assistant') return;
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        const queryPayload = {
+          lostWhat: assistantInput.lostWhat,
+          lostCategory: assistantInput.lostCategory,
+          lostWhere: assistantStep >= 2 ? assistantInput.lostWhere : '',
+          lostArea: assistantStep >= 2 ? assistantInput.lostArea : '',
+          lostWhen: assistantStep >= 2 ? assistantInput.lostWhen : '',
+          lostMarks: assistantStep >= 3 ? assistantInput.lostMarks : '',
+        };
+        const { totalScanned, matches } = await lostAndFoundApi.searchDatabaseMatches(queryPayload);
+        if (!cancelled) {
+          setDbScannedCount(totalScanned);
+          setLiveDbMatches(matches);
+          if (assistantStep === 4) {
+            setAssistantMatches(matches);
+          }
+        }
+      } catch (err) {
+        console.warn('[AI Assistant] Live DB check notice:', err);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    activeTab,
+    assistantStep,
+    assistantInput.lostWhat,
+    assistantInput.lostCategory,
+    assistantInput.lostWhere,
+    assistantInput.lostArea,
+    assistantInput.lostWhen,
+    assistantInput.lostMarks,
+    items.length,
+  ]);
+
+  // Run Full AI Recovery Assistant Database Check
+  const handleRunAssistant = async () => {
+    setAssistantAnalyzing(true);
+    try {
+      const { totalScanned, matches } = await lostAndFoundApi.searchDatabaseMatches(assistantInput);
+      setDbScannedCount(totalScanned);
+      setLiveDbMatches(matches);
+      setAssistantMatches(matches);
+      setAssistantStep(4);
+    } catch (err) {
+      console.error('[AI Assistant] Database check failed:', err);
+      if (showToast) showToast('Could not check database records right now.', 'error');
+    } finally {
+      setAssistantAnalyzing(false);
+    }
+  };
+
+  // Claims visible to current user (Staff/Admin see all; Students see claims they submitted or for items they reported)
+  const visibleClaims = (isAdmin || isStaff || !currentUserEmail)
+    ? claims
+    : claims.filter((claim) => {
+        const claimEmail = (claim.claimantEmail || claim.claimant_email || '').trim().toLowerCase();
+        if (claimEmail && claimEmail === currentUserEmail) return true;
+        const relatedItem = items.find((it) => String(it.id) === String(claim.itemId) || String(it.itemCode) === String(claim.itemId));
+        const itemOwnerEmail = (relatedItem?.contactEmail || relatedItem?.reporterEmail || '').trim().toLowerCase();
+        return Boolean(itemOwnerEmail && itemOwnerEmail === currentUserEmail);
+      });
 
   // Filtered reports for catalog view
   const filteredReports = items.filter((item) => {
@@ -426,6 +542,10 @@ export const LostFoundModule = ({ showToast }) => {
     if (selectedCategory !== 'All Categories' && item.category !== selectedCategory) return false;
     if (selectedBuilding !== 'All Locations' && !item.location?.includes(selectedBuilding)) return false;
     if (selectedStatus !== 'ALL' && item.status !== selectedStatus) return false;
+    if (onlyMyReports && currentUserEmail) {
+      const ownerEmail = (item.reporterEmail || item.contactEmail || '').trim().toLowerCase();
+      if (ownerEmail !== currentUserEmail) return false;
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -564,7 +684,7 @@ export const LostFoundModule = ({ showToast }) => {
           { key: 'report-lost', label: 'Report Lost Item', icon: HelpCircle },
           { key: 'report-found', label: 'Report Found Item', icon: Gift },
           { key: 'ai-assistant', label: 'AI Recovery Assistant', icon: Bot },
-          { key: 'claims', label: `Claims & Returns (${claims.length})`, icon: ShieldCheck },
+          { key: 'claims', label: `Claims & Returns (${visibleClaims.length})`, icon: ShieldCheck },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;
@@ -599,6 +719,7 @@ export const LostFoundModule = ({ showToast }) => {
           ===================================================================== */}
       {activeTab === 'browse' && (
         <div>
+
           {/* Search & Filter Bar (.glass-panel) */}
           <div
             className="glass-panel"
@@ -671,8 +792,23 @@ export const LostFoundModule = ({ showToast }) => {
               </select>
             </div>
 
+            {/* My Reports vs All Filter */}
+            {currentUserEmail && (
+              <div style={{ flex: '0 1 180px' }}>
+                <select
+                  className="form-select"
+                  value={onlyMyReports ? 'MINE' : 'ALL'}
+                  onChange={(e) => setOnlyMyReports(e.target.value === 'MINE')}
+                  title="Filter by your account email"
+                >
+                  <option value="ALL">All Campus Reports</option>
+                  <option value="MINE">My Reports</option>
+                </select>
+              </div>
+            )}
+
             {/* Reset Button */}
-            {(searchQuery || selectedType !== 'ALL' || selectedCategory !== 'All Categories' || selectedBuilding !== 'All Locations') && (
+            {(searchQuery || selectedType !== 'ALL' || selectedCategory !== 'All Categories' || selectedBuilding !== 'All Locations' || onlyMyReports) && (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -682,6 +818,7 @@ export const LostFoundModule = ({ showToast }) => {
                   setSelectedCategory('All Categories');
                   setSelectedBuilding('All Locations');
                   setSelectedStatus('ALL');
+                  setOnlyMyReports(false);
                 }}
               >
                 <RotateCcw size={14} /> Reset
@@ -726,6 +863,9 @@ export const LostFoundModule = ({ showToast }) => {
               {filteredReports.map((item) => {
                 const isLost = item.type === 'LOST';
                 const isReturned = item.status === 'RETURNED';
+                const isClaimed = item.status === 'CLAIMED';
+                const ownerEmail = (item.reporterEmail || item.contactEmail || '').trim().toLowerCase();
+                const canManageItem = Boolean(isAdmin || isStaff || (currentUserEmail && ownerEmail === currentUserEmail));
 
                 return (
                   <div
@@ -761,12 +901,12 @@ export const LostFoundModule = ({ showToast }) => {
                           <span
                             className="badge"
                             style={{
-                              background: isReturned ? '#dcfce7' : '#eff6ff',
-                              color: isReturned ? '#15803d' : '#1d4ed8',
-                              border: `1px solid ${isReturned ? '#86efac' : '#bfdbfe'}`,
+                              background: isReturned ? '#dcfce7' : isClaimed ? '#fef3c7' : '#eff6ff',
+                              color: isReturned ? '#15803d' : isClaimed ? '#b45309' : '#1d4ed8',
+                              border: `1px solid ${isReturned ? '#86efac' : isClaimed ? '#fde68a' : '#bfdbfe'}`,
                             }}
                           >
-                            {isReturned ? 'Returned' : 'Active'}
+                            {isReturned ? 'Returned' : isClaimed ? 'Claimed' : 'Active'}
                           </span>
                         </div>
                         <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -834,6 +974,8 @@ export const LostFoundModule = ({ showToast }) => {
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
+                        gap: '8px',
+                        flexWrap: 'wrap',
                       }}
                     >
                       <button
@@ -844,16 +986,40 @@ export const LostFoundModule = ({ showToast }) => {
                         <Eye size={14} /> View Details
                       </button>
 
-                      {!isLost && item.status !== 'RETURNED' && (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          onClick={() => setClaimingItem(item)}
-                          style={{ background: '#16a34a', borderColor: '#15803d' }}
-                        >
-                          <ShieldCheck size={14} /> Claim Item
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        {!isLost && item.status !== 'RETURNED' && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => setClaimingItem(item)}
+                            style={{ background: '#16a34a', borderColor: '#15803d' }}
+                          >
+                            <ShieldCheck size={14} /> Claim Item
+                          </button>
+                        )}
+                        {canManageItem && item.status !== 'RETURNED' && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleMarkItemReturned(item)}
+                            title="Mark this item as returned/reunited"
+                            style={{ color: '#15803d', borderColor: '#86efac', background: '#f0fdf4' }}
+                          >
+                            <CheckCircle size={14} /> Mark Returned
+                          </button>
+                        )}
+                        {canManageItem && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleDeleteItem(item)}
+                            title="Delete report"
+                            style={{ color: '#dc2626' }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -1242,32 +1408,65 @@ export const LostFoundModule = ({ showToast }) => {
           TAB 4: AI RECOVERY ASSISTANT ("HELP ME FIND IT")
           ===================================================================== */}
       {activeTab === 'ai-assistant' && (
-        <div className="glass-panel" style={{ padding: '32px', maxWidth: '820px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '22px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px' }}>
-            <div style={{ width: 44, height: 44, borderRadius: '12px', background: 'linear-gradient(135deg, #e0e7ff, #fae8ff)', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Bot size={24} />
+        <div className="glass-panel" style={{ padding: '32px', maxWidth: '860px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '18px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: 44, height: 44, borderRadius: '12px', background: 'linear-gradient(135deg, #e0e7ff, #fae8ff)', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Bot size={24} />
+              </div>
+              <div>
+                <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  CampusFind AI Recovery Assistant
+                </h2>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                  Live database-connected assistant: checks Firestore records as you answer each question.
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
-                CampusFind AI Recovery Assistant
-              </h2>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
-                Guided step-by-step assistant correlating campus locations, categories, and found records.
-              </p>
-            </div>
+          </div>
+
+          {/* Step Progress Indicator */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
+            {[
+              { step: 1, label: '1. What You Lost' },
+              { step: 2, label: '2. Where & When' },
+              { step: 3, label: '3. Identifying Marks' },
+              { step: 4, label: '4. Database Matches' },
+            ].map((s) => (
+              <button
+                key={s.step}
+                type="button"
+                onClick={() => {
+                  if (s.step === 4) handleRunAssistant();
+                  else setAssistantStep(s.step);
+                }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  border: assistantStep === s.step ? '1px solid var(--primary-600)' : '1px solid var(--border-subtle)',
+                  background: assistantStep === s.step ? '#eef2ff' : '#ffffff',
+                  color: assistantStep === s.step ? 'var(--primary-700)' : 'var(--text-secondary)',
+                  fontSize: '0.78rem',
+                  fontWeight: assistantStep === s.step ? 700 : 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
 
           {assistantStep === 1 && (
             <div>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '14px' }}>
-                Step 1: What did you misplace?
+                Question 1: What item are you looking for?
               </h3>
               <div className="form-group">
-                <label className="form-label">Item Name</label>
+                <label className="form-label">Item Name or Keywords</label>
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="e.g. Casio fx-991EX Calculator / Dell Laptop Charger"
+                  placeholder="e.g. Casio Calculator, Blue Wallet, Dell Charger, ID Card"
                   value={assistantInput.lostWhat}
                   onChange={(e) => setAssistantInput({ ...assistantInput, lostWhat: e.target.value })}
                 />
@@ -1286,14 +1485,21 @@ export const LostFoundModule = ({ showToast }) => {
                 </select>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleRunAssistant}
+                  disabled={assistantAnalyzing}
+                >
+                  View Matches Now ({liveDbMatches.length})
+                </button>
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!assistantInput.lostWhat.trim()}
                   onClick={() => setAssistantStep(2)}
                 >
-                  Next: Where & When <ArrowRight size={16} />
+                  Next Question: Where & When <ArrowRight size={16} />
                 </button>
               </div>
             </div>
@@ -1302,34 +1508,87 @@ export const LostFoundModule = ({ showToast }) => {
           {assistantStep === 2 && (
             <div>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '14px' }}>
-                Step 2: Where & When was it last seen?
+                Question 2: Where & When was it last seen?
               </h3>
-              <div className="form-group">
-                <label className="form-label">Last Seen Building or Area</label>
-                <select
-                  className="form-select"
-                  value={assistantInput.lostWhere}
-                  onChange={(e) => setAssistantInput({ ...assistantInput, lostWhere: e.target.value })}
-                >
-                  {CAMPUS_BUILDINGS.filter((b) => b !== 'All Locations').map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Campus Building</label>
+                  <select
+                    className="form-select"
+                    value={assistantInput.lostWhere}
+                    onChange={(e) => setAssistantInput({ ...assistantInput, lostWhere: e.target.value })}
+                  >
+                    {CAMPUS_BUILDINGS.filter((b) => b !== 'All Locations').map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Date Last Seen</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={assistantInput.lostWhen}
+                    onChange={(e) => setAssistantInput({ ...assistantInput, lostWhen: e.target.value })}
+                  />
+                </div>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Any specific markings or features?</label>
+                <label className="form-label">Specific Room / Spot (Optional)</label>
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="e.g. Yellow sticker, black lanyard, circular scratch"
+                  placeholder="e.g. 2nd Floor Reading Hall, Canteen Table, Lab 304"
+                  value={assistantInput.lostArea}
+                  onChange={(e) => setAssistantInput({ ...assistantInput, lostArea: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setAssistantStep(1)}>
+                  Back
+                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleRunAssistant}
+                    disabled={assistantAnalyzing}
+                  >
+                    View Matches Now ({liveDbMatches.length})
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setAssistantStep(3)}
+                  >
+                    Next Question: Identifying Marks <ArrowRight size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {assistantStep === 3 && (
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '14px' }}>
+                Question 3: Any distinguishing marks, color, or brand details?
+              </h3>
+              <div className="form-group">
+                <label className="form-label">Color, Brand, Stickers, or Unique Identifiers</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Yellow sticker, black lanyard, circular scratch, HP logo"
                   value={assistantInput.lostMarks}
                   onChange={(e) => setAssistantInput({ ...assistantInput, lostMarks: e.target.value })}
                 />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setAssistantStep(1)}>
+                <button type="button" className="btn btn-secondary" onClick={() => setAssistantStep(2)}>
                   Back
                 </button>
                 <button
@@ -1338,31 +1597,135 @@ export const LostFoundModule = ({ showToast }) => {
                   onClick={handleRunAssistant}
                   disabled={assistantAnalyzing}
                 >
-                  {assistantAnalyzing ? 'Correlating Campus Catalog...' : 'Run Match Radar'}
+                  {assistantAnalyzing ? 'Checking Database Records...' : `Show Database Matches (${liveDbMatches.length})`}
                 </button>
               </div>
             </div>
           )}
 
-          {assistantStep === 3 && (
+          {/* Live Database Preview while answering Questions 1-3 */}
+          {assistantStep < 4 && (
+            <div style={{ marginTop: '24px', paddingTop: '18px', borderTop: '1px dashed var(--border-subtle)' }}>
+              {liveDbMatches.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={handleRunAssistant}>
+                    Open All {liveDbMatches.length} Matches
+                  </button>
+                </div>
+              )}
+
+              {liveDbMatches.length === 0 ? (
+                <div style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '10px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  {assistantInput.lostWhat.trim()
+                    ? 'No matching records yet for those details. Keep answering the next question or try broader keywords.'
+                    : 'Type an item name or pick a category/location above to see matching items stored in the database in real time.'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {liveDbMatches.slice(0, 3).map(({ candidate, confidence, reasons }, idx) => (
+                    <div
+                      key={candidate.id || idx}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '12px',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ flex: '1 1 240px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: candidate.type === 'FOUND' ? '#dcfce7' : '#fee2e2',
+                              color: candidate.type === 'FOUND' ? '#15803d' : '#b91c1c',
+                              border: `1px solid ${candidate.type === 'FOUND' ? '#86efac' : '#fecaca'}`,
+                            }}
+                          >
+                            {candidate.type}
+                          </span>
+                          <strong style={{ fontSize: '0.94rem', color: '#0f172a' }}>
+                            {candidate.itemName || candidate.title}
+                          </strong>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: confidence >= 60 ? '#15803d' : '#4f46e5' }}>
+                            {confidence}% match
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          {candidate.location} • {candidate.date || candidate.dateOccurred}
+                          {reasons?.length > 0 ? ` • ${reasons.slice(0, 2).join(', ')}` : ''}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setViewingItem(candidate)}>
+                          <Eye size={13} /> Details
+                        </button>
+                        {candidate.type === 'FOUND' && candidate.status !== 'RETURNED' && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            style={{ background: '#16a34a', borderColor: '#15803d' }}
+                            onClick={() => setClaimingItem(candidate)}
+                          >
+                            Claim
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {assistantStep === 4 && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
-                  Potential Match Results ({assistantMatches.length})
-                </h3>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAssistantStep(1)}>
-                  Start New Search
-                </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                    Relevant Database Records Found ({assistantMatches.length})
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                    Scanned {dbScannedCount || items.length} stored campus records for "{assistantInput.lostWhat || assistantInput.lostCategory}"
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAssistantStep(3)}>
+                    Refine Answers
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setAssistantInput({
+                        lostWhat: '',
+                        lostCategory: 'Electronics',
+                        lostWhere: 'Central Library',
+                        lostArea: '',
+                        lostWhen: new Date().toISOString().split('T')[0],
+                        lostMarks: '',
+                      });
+                      setAssistantStep(1);
+                    }}
+                  >
+                    Start New Search
+                  </button>
+                </div>
               </div>
 
               {assistantMatches.length === 0 ? (
                 <div style={{ padding: '32px 16px', textAlign: 'center', background: '#f8fafc', borderRadius: '12px' }}>
                   <AlertCircle size={32} color="#d97706" style={{ margin: '0 auto 10px' }} />
                   <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b' }}>
-                    No Immediate Found Item Matches
+                    No Matching Records Stored in Database Yet
                   </h4>
                   <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', maxWidth: '480px', margin: '6px auto 16px', lineHeight: 1.5 }}>
-                    We recommend checking the <strong>{assistantInput.lostWhere} Department Office</strong> or <strong>Security Gate 1 Help Desk</strong>. You can also file a formal Lost Report so we automatically match future submissions.
+                    We checked all {dbScannedCount || items.length} stored records. Check the <strong>{assistantInput.lostWhere} Office</strong> or <strong>Security Gate 1 Desk</strong>, or file a formal Lost Report so future database matches notify you.
                   </p>
                   <button
                     type="button"
@@ -1373,6 +1736,8 @@ export const LostFoundModule = ({ showToast }) => {
                         itemName: assistantInput.lostWhat,
                         category: assistantInput.lostCategory,
                         building: assistantInput.lostWhere,
+                        location: assistantInput.lostArea || '',
+                        date: assistantInput.lostWhen || prev.date,
                         distinguishingMarks: assistantInput.lostMarks,
                       }));
                       setActiveTab('report-lost');
@@ -1395,17 +1760,42 @@ export const LostFoundModule = ({ showToast }) => {
                         justifyContent: 'space-between',
                         alignItems: 'center',
                         gap: '14px',
+                        flexWrap: 'wrap',
                       }}
                     >
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span className="badge" style={{ background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
-                            FOUND
+                      {candidate.image && (
+                        <img
+                          src={candidate.image}
+                          alt={candidate.itemName || candidate.title}
+                          style={{ width: '74px', height: '74px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #e2e8f0', flexShrink: 0 }}
+                        />
+                      )}
+
+                      <div style={{ flex: '1 1 280px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: candidate.type === 'FOUND' ? '#dcfce7' : '#fee2e2',
+                              color: candidate.type === 'FOUND' ? '#15803d' : '#b91c1c',
+                              border: `1px solid ${candidate.type === 'FOUND' ? '#86efac' : '#fecaca'}`,
+                            }}
+                          >
+                            {candidate.type}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            #{candidate.itemCode || candidate.id}
                           </span>
                           <strong style={{ fontSize: '1rem', color: '#0f172a' }}>{candidate.itemName || candidate.title}</strong>
                         </div>
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0' }}>
-                          📍 {candidate.location} • 🏢 Custody: {candidate.holdingLocation || 'Campus Security'}
+                        {candidate.description && (
+                          <p style={{ fontSize: '0.82rem', color: 'var(--text-primary)', margin: '6px 0 4px', lineHeight: 1.4 }}>
+                            {candidate.description}
+                          </p>
+                        )}
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0' }}>
+                          Location: {candidate.location} • Date: {candidate.date || candidate.dateOccurred}
+                          {candidate.holdingLocation ? ` • Custody: ${candidate.holdingLocation}` : ''}
                         </p>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
                           {reasons.map((r, i) => (
@@ -1421,14 +1811,26 @@ export const LostFoundModule = ({ showToast }) => {
                           {confidence}%
                         </div>
                         <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)' }}>Match Score</div>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          style={{ marginTop: '8px', fontSize: '0.75rem', background: '#16a34a' }}
-                          onClick={() => setClaimingItem(candidate)}
-                        >
-                          Claim Item
-                        </button>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.75rem' }}
+                            onClick={() => setViewingItem(candidate)}
+                          >
+                            <Eye size={13} /> Details
+                          </button>
+                          {candidate.type === 'FOUND' && candidate.status !== 'RETURNED' && (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              style={{ fontSize: '0.75rem', background: '#16a34a', borderColor: '#15803d' }}
+                              onClick={() => setClaimingItem(candidate)}
+                            >
+                              Claim Item
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1458,7 +1860,7 @@ export const LostFoundModule = ({ showToast }) => {
             </button>
           </div>
 
-          {claims.length === 0 ? (
+          {visibleClaims.length === 0 ? (
             <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-muted)' }}>
               <ShieldCheck size={36} style={{ margin: '0 auto 10px' }} />
               <p style={{ fontWeight: 600 }}>No ownership claims submitted yet.</p>
@@ -1477,7 +1879,7 @@ export const LostFoundModule = ({ showToast }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {claims.map((claim) => (
+                  {visibleClaims.map((claim) => (
                     <tr key={claim.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '12px', fontWeight: 700, color: 'var(--primary-700)' }}>
                         {claim.claimCode || `CLM-${claim.id}`}

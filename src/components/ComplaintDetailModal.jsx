@@ -127,7 +127,7 @@ export const ComplaintDetailModal = ({
     setIsLinking(true);
     try {
       await complaintsApi.linkDuplicate(complaint.id, {
-        duplicate_of_id: Number(linkTargetId),
+        duplicate_of_id: String(linkTargetId),
         note: linkNote || `Linked as duplicate of #${linkTargetId}`,
       });
       if (showToast) showToast(`Linked complaint to #${linkTargetId}`, 'success');
@@ -737,7 +737,7 @@ export const ComplaintDetailModal = ({
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--primary-600)' }}>
-                              #{dup.formatted_id || `CMP-${1000 + dup.id}`}
+                              #{dup.formatted_id || dup.id}
                             </span>
                             <span style={{ fontSize: '0.72rem', background: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
                               {dup.similarity_label || `${dup.similarity}%`} Similarity

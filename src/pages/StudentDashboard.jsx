@@ -27,7 +27,7 @@ import { QRScannerModal } from '../components/QRScannerModal';
 
 
 const CATEGORIES = ['All', 'Electrical', 'Furniture', 'Classroom', 'Wi-Fi/Network', 'Plumbing', 'Cleaning', 'Projector', 'Fan/AC', 'Other'];
-const STATUSES = ['All', 'Submitted', 'Under Review', 'Assigned', 'In Progress', 'Resolved', 'Rejected'];
+const STATUSES = ['All', 'Not Solved Yet', 'Submitted', 'Under Review', 'Assigned', 'In Progress', 'Resolved', 'Rejected'];
 const PRIORITIES = ['All', 'Critical', 'High', 'Medium', 'Low'];
 
 export const StudentDashboard = ({
@@ -57,18 +57,22 @@ export const StudentDashboard = ({
   const [qrPrefilledLocation, setQrPrefilledLocation] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const applyComplaintsList = (myList) => {
+    const safeList = Array.isArray(myList) ? myList : [];
+    setComplaints(safeList);
+    setStats({
+      total: safeList.length,
+      submitted: safeList.filter((c) => ['Submitted', 'Under Review'].includes(c.status)).length,
+      in_progress: safeList.filter((c) => ['Assigned', 'In Progress'].includes(c.status)).length,
+      resolved: safeList.filter((c) => c.status === 'Resolved').length,
+    });
+  };
+
   const fetchComplaintsAndStats = async () => {
     setLoading(true);
     try {
-      const myList = await complaintsApi.getComplaints(user?.id || user?.uid, user?.role);
-
-      setComplaints(myList);
-      setStats({
-        total: myList.length,
-        submitted: myList.filter((c) => ['Submitted', 'Under Review'].includes(c.status)).length,
-        in_progress: myList.filter((c) => ['Assigned', 'In Progress'].includes(c.status)).length,
-        resolved: myList.filter((c) => c.status === 'Resolved').length,
-      });
+      const myList = await complaintsApi.getComplaints(user?.id || user?.uid, user?.role, user?.email);
+      applyComplaintsList(myList);
     } catch (err) {
       console.error(err);
       showToast('Failed to load complaints.', 'error');
@@ -80,8 +84,38 @@ export const StudentDashboard = ({
   useEffect(() => {
     fetchComplaintsAndStats();
 
+    // Real-time Firestore listener scoped by current user's email
+    const unsubscribe = complaintsApi.subscribeComplaints(
+      user?.id || user?.uid,
+      user?.role,
+      user?.email,
+      (liveList) => {
+        applyComplaintsList(liveList);
+        setViewingComplaint((prev) =>
+          prev ? (liveList || []).find((c) => String(c.id) === String(prev.id)) || prev : prev
+        );
+        setLoading(false);
+      }
+    );
+
     // Listen for global complaint submission / update events from modals or AI Chatbot
-    const handleRefresh = () => {
+    const handleRefresh = (e) => {
+      const detail = e?.detail;
+      if (detail && (detail.id || detail.complaint_id)) {
+        setComplaints((prev) => {
+          const exists = prev.some((c) => String(c.id) === String(detail.id));
+          const next = exists
+            ? prev.map((c) => (String(c.id) === String(detail.id) ? { ...c, ...detail } : c))
+            : [detail, ...prev];
+          setStats({
+            total: next.length,
+            submitted: next.filter((c) => ['Submitted', 'Under Review'].includes(c.status)).length,
+            in_progress: next.filter((c) => ['Assigned', 'In Progress'].includes(c.status)).length,
+            resolved: next.filter((c) => c.status === 'Resolved').length,
+          });
+          return next;
+        });
+      }
       fetchComplaintsAndStats();
     };
 
@@ -103,24 +137,34 @@ export const StudentDashboard = ({
     }
 
     return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
       window.removeEventListener('complaintCreated', handleRefresh);
       window.removeEventListener('complaintUpdated', handleRefresh);
     };
-  }, [user]);
+  }, [user?.email, user?.id, user?.uid, user?.role]);
 
   // Filter complaints client-side with Search, Status, Priority, Category
   const filteredComplaints = complaints.filter((item) => {
     const q = searchQuery.toLowerCase();
     const matchesSearch =
       !q ||
-      item.complaint_title.toLowerCase().includes(q) ||
-      item.location.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q) ||
+      (item.complaint_title || '').toLowerCase().includes(q) ||
+      (item.location || '').toLowerCase().includes(q) ||
+      (item.description || '').toLowerCase().includes(q) ||
       (item.formatted_id && item.formatted_id.toLowerCase().includes(q)) ||
       (item.location_id && item.location_id.toLowerCase().includes(q));
 
     const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-    const matchesStatus = selectedStatus === 'All' || item.status === selectedStatus;
+    let matchesStatus = true;
+    if (selectedStatus === 'Not Solved Yet') {
+      matchesStatus = item.status !== 'Resolved' && item.status !== 'Rejected';
+    } else if (selectedStatus === 'Under Review Group') {
+      matchesStatus = ['Submitted', 'Under Review'].includes(item.status);
+    } else if (selectedStatus === 'In Progress Group') {
+      matchesStatus = ['Assigned', 'In Progress'].includes(item.status);
+    } else if (selectedStatus !== 'All') {
+      matchesStatus = item.status === selectedStatus;
+    }
     const matchesPriority = selectedPriority === 'All' || item.priority === selectedPriority;
 
     return matchesSearch && matchesCategory && matchesStatus && matchesPriority;
@@ -222,9 +266,17 @@ export const StudentDashboard = ({
         </div>
       </div>
 
-      {/* Statistics Cards */}
+      {/* Statistics Cards (clickable to filter status clearly) */}
       <div className="dashboard-grid">
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          onClick={() => setSelectedStatus('All')}
+          style={{
+            cursor: 'pointer',
+            outline: selectedStatus === 'All' ? '2px solid var(--primary-500)' : 'none',
+          }}
+          title="Show all your reported issues"
+        >
           <div className="stat-info">
             <h3>My Complaints</h3>
             <div className="stat-value">{stats.total}</div>
@@ -235,7 +287,15 @@ export const StudentDashboard = ({
           </div>
         </div>
 
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          onClick={() => setSelectedStatus(selectedStatus === 'Under Review Group' ? 'All' : 'Under Review Group')}
+          style={{
+            cursor: 'pointer',
+            outline: selectedStatus === 'Under Review Group' ? '2px solid #f59e0b' : 'none',
+          }}
+          title="Filter Under Review / Submitted issues"
+        >
           <div className="stat-info">
             <h3>Under Review</h3>
             <div className="stat-value">{stats.submitted}</div>
@@ -246,7 +306,15 @@ export const StudentDashboard = ({
           </div>
         </div>
 
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          onClick={() => setSelectedStatus(selectedStatus === 'In Progress Group' ? 'All' : 'In Progress Group')}
+          style={{
+            cursor: 'pointer',
+            outline: selectedStatus === 'In Progress Group' ? '2px solid #3b82f6' : 'none',
+          }}
+          title="Filter Assigned / In Progress issues"
+        >
           <div className="stat-info">
             <h3>In Progress</h3>
             <div className="stat-value">{stats.in_progress}</div>
@@ -257,7 +325,15 @@ export const StudentDashboard = ({
           </div>
         </div>
 
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          onClick={() => setSelectedStatus(selectedStatus === 'Resolved' ? 'All' : 'Resolved')}
+          style={{
+            cursor: 'pointer',
+            outline: selectedStatus === 'Resolved' ? '2px solid #10b981' : 'none',
+          }}
+          title="Filter Resolved issues"
+        >
           <div className="stat-info">
             <h3>Resolved</h3>
             <div className="stat-value">{stats.resolved}</div>
@@ -393,13 +469,16 @@ export const StudentDashboard = ({
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '8px',
           }}
         >
           <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>
             My Reported Issues ({filteredComplaints.length})
           </h2>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            Showing records stored in database
+            {user?.email ? `${user.email} • ` : ''}
+            {stats.submitted} Under Review • {stats.in_progress} Processing • {stats.total - stats.resolved} Unsolved • {stats.resolved} Resolved
           </span>
         </div>
 

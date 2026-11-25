@@ -47,7 +47,7 @@ export async function apiClient(endpoint, { body, silentError = false, ...custom
   }
 
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
-  const url = `${BASE_URL}/${cleanEndpoint}`;
+  const url = `${BASE_URL}/${cleanEndpoint}`.replace(/\?$/, '');
 
   if (!silentError) {
     console.log(`[API Request] ${customConfig.method || 'GET'} /${cleanEndpoint}`);

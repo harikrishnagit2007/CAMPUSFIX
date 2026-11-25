@@ -33,9 +33,13 @@
         "studentId": { "type": "string", "maxLength": 128 },
         "studentName": { "type": "string", "maxLength": 128 },
         "studentEmail": { "type": "string", "maxLength": 128 },
+        "studentPhone": { "type": "string", "maxLength": 32 },
+        "location_id": { "type": "string", "maxLength": 128 },
         "assignedStaffId": { "type": "string", "maxLength": 128 },
         "assignedStaffName": { "type": "string", "maxLength": 128 },
-        "image": { "type": "string", "maxLength": 5000000 },
+        "sla_deadline": { "type": "string" },
+        "resolved_at": { "type": "string" },
+        "image": { "type": "string", "maxLength": 1000000 },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },
@@ -91,7 +95,12 @@
         "status": { "type": "string", "enum": ["OPEN", "CLAIMED", "RETURNED", "CLOSED"] },
         "reporterId": { "type": "string", "maxLength": 128 },
         "reporterName": { "type": "string", "maxLength": 128 },
-        "image": { "type": "string" }
+        "reporterEmail": { "type": "string", "maxLength": 128 },
+        "contactEmail": { "type": "string", "maxLength": 128 },
+        "contactPhone": { "type": "string", "maxLength": 32 },
+        "image": { "type": "string", "maxLength": 1000000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["type", "itemName", "category", "location"]
     },
@@ -109,7 +118,9 @@
         "claimantEmail": { "type": "string", "maxLength": 128 },
         "claimantPhone": { "type": "string", "maxLength": 32 },
         "ownershipProof": { "type": "string", "maxLength": 2048 },
-        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "HANDED_OVER"] }
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "HANDED_OVER"] },
+        "adminNotes": { "type": "string", "maxLength": 1024 },
+        "submittedAt": { "type": "string" }
       },
       "required": ["itemId", "claimantName", "ownershipProof"]
     }

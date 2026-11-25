@@ -102,7 +102,53 @@ export const AdminDashboard = ({ showToast }) => {
 
   useEffect(() => {
     loadData();
-  }, []);
+    const unsubscribe = complaintsApi.subscribeComplaints(
+      user?.id,
+      user?.role,
+      user?.email,
+      (liveList) => {
+        const list = liveList || [];
+        setComplaints(list);
+        setEmergencies(
+          list.filter(
+            (c) => (c.priority === 'Critical' || c.priority === 'High' || c.is_emergency) && c.status !== 'Resolved' && c.status !== 'Rejected'
+          )
+        );
+        const byCategory = {};
+        list.forEach((c) => {
+          const cat = c.category || 'General';
+          byCategory[cat] = (byCategory[cat] || 0) + 1;
+        });
+        const submitted = list.filter((c) => ['Submitted', 'Under Review'].includes(c.status)).length;
+        const inProgress = list.filter((c) => ['Assigned', 'In Progress'].includes(c.status)).length;
+        const resolved = list.filter((c) => c.status === 'Resolved').length;
+        const critical = list.filter((c) => c.priority === 'Critical').length;
+        setAnalytics((prev) => ({
+          ...(prev || {}),
+          total: list.length,
+          submitted,
+          in_progress: inProgress,
+          resolved,
+          critical,
+          emergency_count: critical,
+          by_category: byCategory,
+          by_priority: {
+            Critical: critical,
+            High: list.filter((c) => c.priority === 'High').length,
+            Medium: list.filter((c) => c.priority === 'Medium').length,
+            Low: list.filter((c) => c.priority === 'Low').length,
+          },
+        }));
+        setLoading(false);
+        setViewingComplaint((prev) =>
+          prev ? list.find((c) => String(c.id) === String(prev.id)) || prev : prev
+        );
+      }
+    );
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [user?.id, user?.role, user?.email]);
 
   // Filtered Complaints
   const filteredComplaints = complaints.filter((c) => {
@@ -689,6 +735,17 @@ export const AdminDashboard = ({ showToast }) => {
 
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'inline-flex', gap: '6px' }}>
+                            {c.status !== 'In Progress' && c.status !== 'Resolved' && c.status !== 'Rejected' && (
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleUpdateStatus(c.id, 'In Progress')}
+                                title="Mark as In Progress (Processing)"
+                                style={{ background: '#f5f3ff', color: '#7c3aed', borderColor: '#ddd6fe' }}
+                              >
+                                <Play size={13} />
+                                <span>Process</span>
+                              </button>
+                            )}
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={() => setViewingComplaint(c)}

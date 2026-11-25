@@ -1,6 +1,6 @@
 /**
  * CampusFix Services Compatibility Layer
- * Wraps complaintsApi and lostAndFoundApi to eliminate Firestore dependencies
+ * Wraps Firestore-backed complaintsApi and lostAndFoundApi
  * while preserving backwards compatibility with legacy callers.
  */
 

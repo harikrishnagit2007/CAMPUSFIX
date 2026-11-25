@@ -29,7 +29,7 @@ export const GeminiChatBot = ({ showToast }) => {
   const [attachedImage, setAttachedImage] = useState(null);
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
-  const [voiceLang, setVoiceLang] = useState('ta-IN'); // Default to Tamil / Indian regional for clarity
+  const voiceLang = 'en-IN';
   const [voices, setVoices] = useState([]);
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState(null);
   const [isAutoSpeakEnabled, setIsAutoSpeakEnabled] = useState(false);
@@ -495,13 +495,14 @@ export const GeminiChatBot = ({ showToast }) => {
         modelUsedName = 'Action: Stats Query';
       } else if (isSubmitIntent && currentImg) {
         // Multi-modal auto-submit
-        const studentEmail = (user.email || '').toLowerCase();
-        const studentId = user.uid || user.id || 'usr_student';
+        const studentEmail = (user.email || '').trim().toLowerCase();
+        const studentId = String(user.uid || user.id || 'usr_student');
         const res = await complaintsApi.createComplaint({
           complaint_title: userText.slice(0, 50),
           category: 'General',
           building: 'Technology Block C',
           room: 'Room 304',
+          location: 'Technology Block C - Room 304',
           description: userText,
           priority: 'Medium',
           image: currentImg,
@@ -509,6 +510,7 @@ export const GeminiChatBot = ({ showToast }) => {
           student_id: studentId,
           studentId: studentId,
           student_email: studentEmail,
+          studentEmail: studentEmail,
           student_name: user.name || 'Campus Student',
           student_details: {
             name: user.name || 'Campus Student',
@@ -516,7 +518,8 @@ export const GeminiChatBot = ({ showToast }) => {
             department: user.department || 'Student Facilities',
           },
         });
-        agentReplyText = `✅ **Ticket Created**: ${res.complaint_id || res.id}\nI've automatically analyzed your photo and logged this issue in the system. Our maintenance team has been notified!`;
+        window.dispatchEvent(new CustomEvent('complaintCreated', { detail: res }));
+        agentReplyText = `✅ **Ticket Created**: ${res.formatted_id || res.complaint_id || res.id}\nI've automatically analyzed your photo and logged this issue in the system. Our maintenance team has been notified!`;
         modelUsedName = 'Action: Auto-Submit';
       } else {
         // General Chat with full history context - Increased to 30 messages for better continuity
@@ -1137,30 +1140,6 @@ export const GeminiChatBot = ({ showToast }) => {
                 title={isListening ? 'Stop listening' : 'Click to speak (Voice-to-text)'}
               >
                 {isListening ? <MicOff size={16} className="animate-pulse text-red-600" /> : <Mic size={16} />}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const nextLang = voiceLang === 'ta-IN' ? 'en-IN' : 'ta-IN';
-                  setVoiceLang(nextLang);
-                  if (showToast) {
-                    showToast(nextLang === 'ta-IN' ? '🇮🇳 மொழி: தமிழ் (Tamil voice & mic active)' : '🌐 Language: English IN active', 'info');
-                  }
-                }}
-                style={{
-                  background: voiceLang === 'ta-IN' ? '#e0e7ff' : '#f3e8ff',
-                  border: '1px solid',
-                  borderColor: voiceLang === 'ta-IN' ? '#c7d2fe' : '#e9d5ff',
-                  borderRadius: '6px',
-                  padding: '4px 6px',
-                  fontSize: '0.68rem',
-                  fontWeight: 700,
-                  color: voiceLang === 'ta-IN' ? '#4338ca' : '#7e22ce',
-                  cursor: 'pointer',
-                }}
-                title="Switch voice language (தமிழ் / English)"
-              >
-                {voiceLang === 'ta-IN' ? 'தமிழ்' : 'ENG'}
               </button>
             </div>
 

@@ -29,6 +29,11 @@ export const AuthProvider = ({ children }) => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         try {
+          const activeToken = localStorage.getItem('campusfix_token') || '';
+          // Do not overwrite an explicit email/password or demo session with a cached Firebase Google session
+          if (activeToken && !activeToken.includes('firebase-token-') && activeToken.startsWith('token-')) {
+            return;
+          }
           const idToken = await fbUser.getIdToken();
           const storedUser = localStorage.getItem('campusfix_user');
           let currentRole = 'STUDENT';
@@ -36,9 +41,9 @@ export const AuthProvider = ({ children }) => {
             try {
               const p = JSON.parse(storedUser);
               if (p.role) currentRole = p.role;
-            } catch (e) {}
+            } catch {}
           }
-          const email = fbUser.email || '';
+          const email = (fbUser.email || '').trim().toLowerCase();
           const name = fbUser.displayName || (email.includes('harikrishna') ? 'Hari Krishna' : email.split('@')[0]) || 'Campus Member';
           const dept =
             currentRole === 'ADMIN'
@@ -74,7 +79,7 @@ export const AuthProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  // Initialize and verify session directly with Spring Boot backend
+  // Initialize and verify session directly with backend
   useEffect(() => {
     let isMounted = true;
 
@@ -88,6 +93,7 @@ export const AuthProvider = ({ children }) => {
           if (storedUserJson) {
             try {
               const parsed = JSON.parse(storedUserJson);
+              if (parsed.email) parsed.email = parsed.email.trim().toLowerCase();
               if (isMounted) setUser(parsed);
             } catch (e) {}
           }
@@ -98,15 +104,16 @@ export const AuthProvider = ({ children }) => {
         try {
           const userData = await authApi.getCurrentUser();
           if (isMounted && userData) {
+            if (userData.email) userData.email = userData.email.trim().toLowerCase();
             setUser(userData);
             localStorage.setItem('campusfix_user', JSON.stringify(userData));
           }
         } catch (err) {
           console.warn('Backend session check notice:', err?.message || err);
-          // Preserve local stored user session if backend is temporarily unreachable or returning 500
           if (storedUserJson) {
             try {
               const parsed = JSON.parse(storedUserJson);
+              if (parsed.email) parsed.email = parsed.email.trim().toLowerCase();
               if (isMounted) setUser(parsed);
             } catch (e) {
               localStorage.removeItem('campusfix_token');
@@ -142,27 +149,25 @@ export const AuthProvider = ({ children }) => {
     console.log('[AuthContext] Initiating Firebase Google Sign-In for role:', cleanRole);
 
     let fbUser = null;
-    let token = null;
+    let idTokenValue = null;
 
     try {
-      // 1. Invoke Firebase Auth popup with GoogleAuthProvider
       const result = await signInWithPopup(auth, googleProvider);
       fbUser = result.user;
-      token = await fbUser.getIdToken();
+      idTokenValue = await fbUser.getIdToken();
       console.log('[AuthContext] Firebase Google Sign-In authenticated successfully:', fbUser.email);
     } catch (popupErr) {
       console.warn('[AuthContext] Firebase signInWithPopup notice:', popupErr?.code, popupErr?.message);
-      // In mobile WebViews or iframe containers, popups are frequently closed or intercepted by the browser.
-      // Gracefully continue with the verified campus Google identity without throwing an error to ensure continuous access.
       console.info('[AuthContext] Continuing with authorized campus Google session...');
     }
 
     // Determine user identity from Firebase user or verified campus student identity
-    const email = (fbUser?.email || 'harikrishna.gm.2025.aids@rajalakshmi.edu.in').toLowerCase();
+    const email = (fbUser?.email || 'harikrishna.gm.2025.aids@rajalakshmi.edu.in').trim().toLowerCase();
     const name = fbUser?.displayName || (email.includes('harikrishna') ? 'Hari Krishna' : email.split('@')[0]);
     const photoURL = fbUser?.photoURL || '';
-    const uid = fbUser?.uid || `usr_g_${Date.now()}`;
-    const idToken = token || `firebase-token-${cleanRole.toLowerCase()}-${Date.now()}`;
+    const stableFallbackUid = `usr_g_${email.replace(/[^a-z0-9]/g, '_')}`;
+    const uid = fbUser?.uid || stableFallbackUid;
+    const idToken = idTokenValue || `firebase-token-${cleanRole.toLowerCase()}-${Date.now()}`;
 
     let finalRole = cleanRole;
     if (email.includes('admin')) finalRole = 'ADMIN';
@@ -190,7 +195,6 @@ export const AuthProvider = ({ children }) => {
       isFirebaseUser: true,
     };
 
-    // 2. Synchronize user profile directly with Spring Boot backend (MySQL database)
     try {
       await authApi.googleLogin({
         email,
@@ -200,10 +204,9 @@ export const AuthProvider = ({ children }) => {
         token: idToken,
       });
     } catch (apiErr) {
-      console.warn('[AuthContext] Spring Boot backend session sync notice:', apiErr?.message || apiErr);
+      console.warn('[AuthContext] Backend session sync notice:', apiErr?.message || apiErr);
     }
 
-    // 4. Set state and local storage
     localStorage.setItem('campusfix_token', idToken);
     localStorage.setItem('campusfix_user', JSON.stringify(appUser));
     localStorage.setItem('campusfix_selected_role', finalRole);
@@ -214,17 +217,25 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (email, password, roleHint) => {
-    console.log('[AuthContext] Processing login authentication request for:', email, 'roleHint:', roleHint);
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    console.log('[AuthContext] Processing login authentication request for:', cleanEmail, 'roleHint:', roleHint);
     try {
-      const data = await authApi.login(email, password, roleHint);
+      await fbSignOut(auth).catch(() => {});
+    } catch {}
+    try {
+      const data = await authApi.login(cleanEmail, password, roleHint);
       console.log('[AuthContext] Backend login response received:', data);
       if (data && data.token && data.user) {
+        const normalizedUser = {
+          ...data.user,
+          email: (data.user.email || cleanEmail).trim().toLowerCase(),
+        };
         localStorage.setItem('campusfix_token', data.token);
-        localStorage.setItem('campusfix_user', JSON.stringify(data.user));
+        localStorage.setItem('campusfix_user', JSON.stringify(normalizedUser));
         if (roleHint) localStorage.setItem('campusfix_selected_role', roleHint);
         setToken(data.token);
-        setUser(data.user);
-        return data;
+        setUser(normalizedUser);
+        return { ...data, user: normalizedUser };
       }
     } catch (err) {
       console.error('[AuthContext] Login API call returned error response:', {
@@ -233,8 +244,6 @@ export const AuthProvider = ({ children }) => {
         data: err?.data,
       });
 
-      // If user logs in with demo credentials and backend proxy is down, allow quick demo entry
-      const cleanEmail = String(email).toLowerCase();
       if (cleanEmail.includes('admin') || cleanEmail.includes('student') || cleanEmail.includes('staff')) {
         console.warn('[AuthContext] Activating demo credential session fallback for:', cleanEmail);
         let role = 'STUDENT';
@@ -244,6 +253,7 @@ export const AuthProvider = ({ children }) => {
         
         const demoUser = {
           id: 'demo-' + role.toLowerCase(),
+          uid: 'demo-' + role.toLowerCase(),
           username: cleanEmail.split('@')[0],
           email: cleanEmail,
           name: name,
@@ -272,13 +282,24 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (userData) => {
-    const data = await authApi.register(userData);
+    try {
+      await fbSignOut(auth).catch(() => {});
+    } catch {}
+    const cleanPayload = {
+      ...userData,
+      email: (userData.email || '').trim().toLowerCase(),
+    };
+    const data = await authApi.register(cleanPayload);
     if (data && data.token && data.user) {
+      const normalizedUser = {
+        ...data.user,
+        email: (data.user.email || cleanPayload.email).trim().toLowerCase(),
+      };
       localStorage.setItem('campusfix_token', data.token);
-      localStorage.setItem('campusfix_user', JSON.stringify(data.user));
+      localStorage.setItem('campusfix_user', JSON.stringify(normalizedUser));
       setToken(data.token);
-      setUser(data.user);
-      return data;
+      setUser(normalizedUser);
+      return { ...data, user: normalizedUser };
     }
     throw new Error('Registration failed. Invalid response from server.');
   };

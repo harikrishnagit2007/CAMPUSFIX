@@ -52,7 +52,28 @@ export const StaffDashboard = ({ showToast }) => {
 
   useEffect(() => {
     fetchAssigned();
-  }, []);
+    const unsubscribe = complaintsApi.subscribeComplaints(
+      user?.id,
+      user?.role,
+      user?.email,
+      (liveList) => {
+        const list = liveList || [];
+        setComplaints(list);
+        setEmergencies(
+          list.filter(
+            (c) => (c.priority === 'Critical' || c.priority === 'High' || c.is_emergency) && c.status !== 'Resolved' && c.status !== 'Rejected'
+          )
+        );
+        setLoading(false);
+        setViewingComplaint((prev) =>
+          prev ? list.find((c) => String(c.id) === String(prev.id)) || prev : prev
+        );
+      }
+    );
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [user?.id, user?.role, user?.email]);
 
   const handleUpdateStatus = async (complaintId, newStatus) => {
     try {

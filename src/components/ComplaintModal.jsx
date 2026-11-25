@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { complaintsApi } from '../api/complaints';
+import { compressImageForStorage } from '../firebase';
 import { QRScannerModal } from './QRScannerModal';
 import { CameraCaptureModal } from './CameraCaptureModal';
 
@@ -195,7 +196,7 @@ export const ComplaintModal = ({
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (file) {
       const objectUrl = URL.createObjectURL(file);
       setImagePreview(objectUrl);
@@ -203,9 +204,9 @@ export const ComplaintModal = ({
       setAppliedAi(false);
 
       const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result;
-        setImageBase64(base64);
+      reader.onload = async () => {
+        const compressed = await compressImageForStorage(reader.result);
+        setImageBase64(compressed);
         if (showToast) showToast('Photo loaded successfully! Click "Analyze Image with AI" to verify.', 'success');
       };
       reader.readAsDataURL(file);
@@ -382,9 +383,17 @@ export const ComplaintModal = ({
 
     setLoading(true);
     try {
-      const studentEmail = (user?.email || '').toLowerCase();
-      const studentId = user?.uid || user?.id || 'usr_student';
-      const studentName = user?.name || 'Campus Student';
+      let storedUser = null;
+      try {
+        const raw = localStorage.getItem('campusfix_user');
+        if (raw) storedUser = JSON.parse(raw);
+      } catch {}
+
+      const studentEmail = (user?.email || storedUser?.email || '').trim().toLowerCase();
+      const studentId = String(user?.uid || user?.id || storedUser?.uid || storedUser?.id || 'usr_student');
+      const studentName = user?.name || storedUser?.name || 'Campus Student';
+
+      const finalImage = imageBase64 || (imagePreview && !imagePreview.startsWith('blob:') ? imagePreview : null);
 
       const payload = {
         complaint_title: formData.complaint_title.trim(),
@@ -393,32 +402,35 @@ export const ComplaintModal = ({
         location: formData.location.trim(),
         location_id: formData.location_id || null,
         priority: formData.priority,
-        image: imageBase64 || imagePreview || null,
+        image: finalImage,
         ai_analysis: aiAnalysis || null,
         student_id: studentId,
         studentId: studentId,
         student_email: studentEmail,
+        studentEmail: studentEmail,
         student_name: studentName,
+        studentName: studentName,
+        student_phone: user?.phone || storedUser?.phone || '',
         student_details: {
           name: studentName,
           email: studentEmail,
-          department: user?.department || 'Student Facilities',
+          department: user?.department || storedUser?.department || 'Student Facilities',
         },
       };
 
-      let ticketId = `CMP-${Math.floor(1000 + Math.random() * 9000)}`;
+      let ticketId = `CMP-${Date.now().toString().slice(-6)}`;
 
       if (isEdit) {
-        await complaintsApi.updateComplaint(complaint.id, payload);
-        window.dispatchEvent(new CustomEvent('complaintUpdated', { detail: { id: complaint.id, ...payload } }));
+        const updated = await complaintsApi.updateComplaint(complaint.id, payload);
+        window.dispatchEvent(new CustomEvent('complaintUpdated', { detail: updated || { id: complaint.id, ...payload } }));
         if (showToast) showToast('Complaint updated successfully.', 'success');
       } else {
         const res = await complaintsApi.createComplaint(payload);
         if (res) {
-          ticketId = res.complaint_id || res.id || ticketId;
+          ticketId = res.formatted_id || res.complaint_id || res.id || ticketId;
         }
         window.dispatchEvent(new CustomEvent('complaintCreated', { detail: res || { ...payload, id: ticketId } }));
-        if (showToast) showToast(`Ticket ${ticketId} submitted & logged in database!`, 'success');
+        if (showToast) showToast(`Ticket ${ticketId} submitted & saved for ${studentEmail || studentName}!`, 'success');
       }
 
       if (onSuccess) onSuccess();
